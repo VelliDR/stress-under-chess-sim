@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Resimli Oyun Rehberi (GUIDEBOOK)
+    url: https://github.com/VelliDR/stress-under-chess-sim/blob/main/GUIDEBOOK.md
+    about: Kural, mutasyon, sis veya tuzak soruları için önce resimli rehbere göz atın.
+  - name: 🔒 Güvenlik Açığı Bildir (Özel)
+    url: https://github.com/VelliDR/stress-under-chess-sim/security/advisories/new
+    about: Güvenlik açıklarını herkese açık Issue yerine özel kanaldan bildirin.

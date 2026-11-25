@@ -1,0 +1,39 @@
+name: Özellik / Denge Önerisi (Feature Request)
+description: Yeni mekanik, taş mutasyonu, arayüz iyileştirmesi veya denge önerisi paylaşın.
+title: "[Öneri]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: category
+    attributes:
+      label: Kategori
+      options:
+        - Arayüz / Görsel / HUD
+        - Oynanış / Mekanik / Denge
+        - Yapay Zeka (S.U.C.S. AI)
+        - Anlatı / Replikler / Ses
+        - Erişilebilirlik
+        - Diğer
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Çözmek İstediğiniz Sorun veya Fikir
+      description: Bu değişiklik oyuna ne kazandıracak?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Önerilen Çözüm
+      description: Nasıl çalışmasını hayal ediyorsunuz?
+    validations:
+      required: true
+
+  - type: textarea
+    id: extras
+    attributes:
+      label: Ek Notlar / Referans Oyunlar (İsteğe Bağlı)

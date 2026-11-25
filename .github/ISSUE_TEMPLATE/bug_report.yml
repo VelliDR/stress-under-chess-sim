@@ -1,0 +1,59 @@
+name: Hata Bildirimi (Bug Report)
+description: Oyunda karşılaştığınız bir hatayı, görsel bozulmayı veya kural uyuşmazlığını bildirin.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        S.U.C.S. geliştirilmesine yardımcı olduğunuz için teşekkürler! Hatanın deterministik olarak tekrarlanabilmesi için mümkünse **Tohum (Seed)** ve **Durum Özeti (`#HASH`)** bilgisini ekleyin (`[L]` Olay Günlüğü veya Duraklatma ekranında görünür).
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Oyun Modu
+      options:
+        - Stres Seferi (Campaign)
+        - Taktik Kriz (1v1 AI Skirmish)
+        - Yüz Yüze Panik (Aynı Cihazda 2P)
+        - Kaos Laboratuvarı (Sandbox)
+        - Ana Menü / Ayarlar / Rehber
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Ne Oldu?
+      description: Karşılaştığınız sorunu ve beklediğiniz davranışı kısaca açıklayın.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Tekrarlama Adımları
+      placeholder: |
+        1. Stres Seferi > Keşif Mangası ile Oda 2'ye gir
+        2. E4'teki taşı buz karesine sür
+        3. ...
+    validations:
+      required: true
+
+  - type: input
+    id: seed
+    attributes:
+      label: Tohum (Seed) ve Durum Özeti (#HASH)
+      placeholder: "Örn: 2026-11-25 / #C02C3732"
+
+  - type: input
+    id: environment
+    attributes:
+      label: Tarayıcı, İşletim Sistemi ve Ekran Boyutu
+      placeholder: "Örn: Firefox 132 / Linux / 1920x1080 (Tam Ekran)"
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Ekran Görüntüsü veya Konsol Hatası (İsteğe Bağlı)
+      description: Varsa ekran görüntüsü sürükleyip bırakın veya tarayıcı konsol çıktısını yapıştırın.

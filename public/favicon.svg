@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges">
+  <rect width="16" height="16" fill="#090c13"/>
+  <!-- Royal Cross (cracked golden crown) -->
+  <rect x="6" y="0" width="4" height="1" fill="#070a12"/>
+  <rect x="6" y="1" width="1" height="1" fill="#070a12"/>
+  <rect x="7" y="1" width="2" height="1" fill="#facc15"/>
+  <rect x="9" y="1" width="1" height="1" fill="#070a12"/>
+  <rect x="4" y="2" width="2" height="1" fill="#070a12"/>
+  <rect x="6" y="2" width="1" height="1" fill="#facc15"/>
+  <rect x="7" y="2" width="1" height="1" fill="#fef08a"/>
+  <rect x="8" y="2" width="1" height="1" fill="#facc15"/>
+  <rect x="9" y="2" width="3" height="1" fill="#070a12"/>
+  <rect x="4" y="3" width="1" height="1" fill="#070a12"/>
+  <rect x="5" y="3" width="1" height="1" fill="#facc15"/>
+  <rect x="6" y="3" width="3" height="1" fill="#fef08a"/>
+  <rect x="9" y="3" width="1" height="1" fill="#f59e0b"/>
+  <rect x="10" y="3" width="2" height="1" fill="#070a12"/>
+  <!-- King Crown Dome with crack -->
+  <rect x="3" y="5" width="10" height="4" fill="#e0f2fe"/>
+  <rect x="2" y="6" width="1" height="3" fill="#070a12"/>
+  <rect x="13" y="6" width="1" height="3" fill="#070a12"/>
+  <rect x="3" y="5" width="3" height="1" fill="#ffffff"/>
+  <rect x="10" y="6" width="3" height="3" fill="#93c5fd"/>
+  <!-- Dark crack line in crown -->
+  <rect x="7" y="5" width="1" height="2" fill="#0f172a"/>
+  <rect x="8" y="7" width="1" height="1" fill="#0f172a"/>
+  <!-- Gold collar -->
+  <rect x="3" y="9" width="10" height="1" fill="#facc15"/>
+  <!-- Torso & Base -->
+  <rect x="4" y="10" width="8" height="3" fill="#dbeafe"/>
+  <rect x="9" y="10" width="3" height="3" fill="#93c5fd"/>
+  <rect x="2" y="13" width="12" height="2" fill="#2563eb"/>
+  <rect x="2" y="15" width="12" height="1" fill="#070a12"/>
+  <!-- Stress Cyan Sweat Drop! -->
+  <rect x="13" y="2" width="1" height="1" fill="#7dd3fc"/>
+  <rect x="12" y="3" width="3" height="2" fill="#38bdf8"/>
+  <rect x="13" y="3" width="1" height="1" fill="#e0f2fe"/>
+  <rect x="13" y="5" width="1" height="1" fill="#0284c7"/>
+</svg>
