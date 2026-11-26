@@ -1,6 +1,7 @@
 import {
   chebyshevDistance,
   clonePiece,
+  cloneTile,
   cloneTiles,
   coordEquals,
   createEmptyTiles,
@@ -39,7 +40,7 @@ import {
   tickTemporaryMiasma,
   triggerPressurePlate,
 } from './dungeon';
-import { recomputeAllFog } from './fog';
+import { isCoordVisibleToSide, recomputeAllFog } from './fog';
 import { seedToRngState } from './prng';
 import {
   adjustComposure,
@@ -64,6 +65,7 @@ import {
   GameEvent,
   GameMode,
   GameState,
+  LegalMove,
   MAX_CHAIN_ITERATIONS,
   MIASMA_SUFFOCATION_THRESHOLD,
   MatchEndReason,
@@ -73,6 +75,19 @@ import {
   StepResult,
   TileState,
 } from './types';
+
+export interface StepGameOptions {
+  /**
+   * Search-optimized execution mode for AI minimax trees:
+   * - Uses copy-on-write shallow tile cloning (never mutates input `state`)
+   * - Skips `actionHistory` cloning/appending
+   * - Uses exact on-demand LOS point queries (`isCoordVisibleToSide`) instead of full
+   *   2-side `recomputeAllFog` grid rebuilds on every ply.
+   */
+  searchMode?: boolean;
+  /** Optional pre-validated LegalMove from `getLegalMoves()` to avoid regenerating moves. */
+  precomputedLegalMove?: LegalMove;
+}
 
 export interface CreateGameStateConfig {
   width: number;
@@ -138,13 +153,63 @@ function cloneGameState(state: GameState): GameState {
   };
 }
 
-function snapshotTurnStartVisibility(state: GameState, side: Side): void {
-  const oppFog = state.fog[opponentOf(side)];
+function cloneTilesShallow(tiles: readonly (readonly TileState[])[]): TileState[][] {
+  const height = tiles.length;
+  const rows = new Array<TileState[]>(height);
+  for (let y = 0; y < height; y++) {
+    rows[y] = tiles[y]!.slice();
+  }
+  return rows;
+}
+
+function cloneGameStateForSearch(state: GameState): GameState {
+  const spawnsLen = state.pendingSpawns.length;
+  const pendingSpawns: PendingSpawn[] = spawnsLen === 0 ? [] : new Array<PendingSpawn>(spawnsLen);
+  for (let i = 0; i < spawnsLen; i++) {
+    const sp = state.pendingSpawns[i]!;
+    pendingSpawns[i] = {
+      pos: { x: sp.pos.x, y: sp.pos.y },
+      turnsRemaining: sp.turnsRemaining,
+      side: sp.side,
+      pieceType: sp.pieceType,
+    };
+  }
+  return {
+    width: state.width,
+    height: state.height,
+    tiles: cloneTilesShallow(state.tiles),
+    pieces: state.pieces.map(clonePiece),
+    turn: state.turn,
+    turnNumber: state.turnNumber,
+    mode: state.mode,
+    factions: state.factions,
+    fog: state.fog,
+    pendingSpawns,
+    bonusMovePieceId: state.bonusMovePieceId,
+    rngState: state.rngState,
+    actionHistory: [],
+    winner: state.winner,
+    nextEntityId: state.nextEntityId,
+    bossCooldown: state.bossCooldown,
+  };
+}
+
+function snapshotTurnStartVisibility(state: GameState, side: Side, searchMode = false): void {
+  const oppSide = opponentOf(side);
+  const oppFog = state.fog[oppSide];
   for (let i = 0; i < state.pieces.length; i++) {
     const p = state.pieces[i]!;
     if (p.side !== side) continue;
     p.usedDashThisTurn = false;
-    p.wasVisibleAtTurnStart = oppFog[p.pos.y]?.[p.pos.x] === 'VISIBLE';
+    if (searchMode) {
+      if (hasTrait(p, 'DASH_ON_REVEAL', state.factions)) {
+        p.wasVisibleAtTurnStart = isCoordVisibleToSide(state, oppSide, p.pos);
+      } else {
+        p.wasVisibleAtTurnStart = false;
+      }
+    } else {
+      p.wasVisibleAtTurnStart = oppFog[p.pos.y]?.[p.pos.x] === 'VISIBLE';
+    }
   }
 }
 
@@ -678,6 +743,7 @@ function updateCampaignAlerts(
   damagedEnemyIds: readonly string[],
   enemyCombatCoords: readonly Coord[],
   events: GameEvent[],
+  searchMode = false,
 ): void {
   if (state.mode !== 'CAMPAIGN') return;
 
@@ -686,11 +752,16 @@ function updateCampaignAlerts(
     const piece = state.pieces[i]!;
     if (piece.side !== 'ENEMY' || piece.aggro !== 'SLEEPING') continue;
 
-    const seenByPlayer = playerFog[piece.pos.y]?.[piece.pos.x] === 'VISIBLE';
     const directlyDamaged = damagedEnemyIds.includes(piece.id);
-    const allyAttackedNearby = enemyCombatCoords.some(
-      (coord) => chebyshevDistance(piece.pos, coord) <= 2,
-    );
+    const allyAttackedNearby =
+      !directlyDamaged &&
+      enemyCombatCoords.some((coord) => chebyshevDistance(piece.pos, coord) <= 2);
+    const seenByPlayer =
+      !directlyDamaged && !allyAttackedNearby
+        ? searchMode
+          ? isCoordVisibleToSide(state, 'PLAYER', piece.pos)
+          : playerFog[piece.pos.y]?.[piece.pos.x] === 'VISIBLE'
+        : false;
 
     if (seenByPlayer || directlyDamaged || allyAttackedNearby) {
       piece.aggro = 'ALERTED';
@@ -707,8 +778,11 @@ function finishWithMatchEnd(
   next: GameState,
   matchEnd: { winner: Side | 'DRAW'; reason: MatchEndReason },
   events: GameEvent[],
+  searchMode = false,
 ): void {
-  next.fog = recomputeAllFog(next, next.fog);
+  if (!searchMode) {
+    next.fog = recomputeAllFog(next, next.fog);
+  }
   next.winner = matchEnd.winner;
   next.bonusMovePieceId = null;
   events.push({
@@ -724,6 +798,7 @@ function runEndOfTurnSteps7To9(
   preAlertedIds: readonly string[],
   ctx: StepContext,
   events: GameEvent[],
+  searchMode = false,
 ): void {
   // Step 7: End-of-turn environment, psychology, Saint auras, silence & unfreeze (canonical piece.id order)
   const activeIds = next.pieces
@@ -824,7 +899,7 @@ function runEndOfTurnSteps7To9(
         adjustComposure(piece, -1, 'HAZARD', events, ctx.newlyFrozenIds);
       }
     } else if ((piece.miasmaExposure ?? 0) > 0) {
-      delete piece.miasmaExposure;
+      piece.miasmaExposure = undefined;
     }
   }
 
@@ -833,42 +908,68 @@ function runEndOfTurnSteps7To9(
 
   const step7MidEnd = checkMatchEnd(next.pieces, ctx.kingTracker);
   if (step7MidEnd !== null) {
-    finishWithMatchEnd(next, step7MidEnd, events);
+    finishWithMatchEnd(next, step7MidEnd, events, searchMode);
     return;
   }
 
-  // 7.3: Saint Auras (SAINT_FAITH 7x7 Cleanse & 2-turn Silence; SAINT_MADNESS Berserk Ready; Decay)
-  runSaintEndOfTurnAuras(next, finishingSide, events, ctx.newlyFrozenIds);
-
-  // 7.4: Decrement frozenTurns (!newlyFrozenIds) & recover breakdown (0 -> 1)
-  const survivingActive = next.pieces
-    .filter((p) => p.side === finishingSide)
-    .sort((a, b) => compareIdsCanonical(a.id, b.id));
-
-  for (let i = 0; i < survivingActive.length; i++) {
-    const piece = survivingActive[i]!;
-    if (piece.frozenTurns > 0 && !ctx.newlyFrozenIds.has(piece.id)) {
-      piece.frozenTurns = Math.max(0, piece.frozenTurns - 1);
-      if (piece.frozenTurns === 0 && getComposure(piece) === 0) {
-        adjustComposure(piece, 1, 'BREAKDOWN_RECOVERY', events, ctx.newlyFrozenIds);
-      }
+  // 7.3: Saint Auras (skip full scan/sort when finishingSide has no Saints and no active charges)
+  let needsSaintAuras = false;
+  for (let i = 0; i < next.pieces.length; i++) {
+    const p = next.pieces[i]!;
+    if (p.side !== finishingSide) continue;
+    if (
+      p.type === 'SAINT_FAITH' ||
+      p.type === 'SAINT_MADNESS' ||
+      (p.faithCharge ?? 0) > 0 ||
+      (p.madnessCharge ?? 0) > 0
+    ) {
+      needsSaintAuras = true;
+      break;
     }
   }
+  if (needsSaintAuras) {
+    runSaintEndOfTurnAuras(next, finishingSide, events, ctx.newlyFrozenIds);
+  }
 
-  // 7.5: Decrement silencedTurns (!newlySilencedIds) for active side
-  for (let i = 0; i < survivingActive.length; i++) {
-    const piece = survivingActive[i]!;
-    if (
-      piece.type !== 'CHIMERA' &&
-      (piece.silencedTurns ?? 0) > 0 &&
-      !ctx.newlySilencedIds.has(piece.id)
-    ) {
-      const nextSil = (piece.silencedTurns ?? 0) - 1;
-      if (nextSil <= 0) {
-        delete piece.silencedTurns;
-        events.push({ type: 'PIECE_SILENCE_EXPIRED', pieceId: piece.id });
-      } else {
-        piece.silencedTurns = nextSil;
+  // 7.4–7.5: Decrement frozenTurns & silencedTurns in canonical order (only sort if any piece needs it)
+  let needsStatusTick = false;
+  for (let i = 0; i < next.pieces.length; i++) {
+    const p = next.pieces[i]!;
+    if (p.side !== finishingSide) continue;
+    if (p.frozenTurns > 0 || (p.type !== 'CHIMERA' && (p.silencedTurns ?? 0) > 0)) {
+      needsStatusTick = true;
+      break;
+    }
+  }
+  if (needsStatusTick) {
+    const survivingActive = next.pieces
+      .filter((p) => p.side === finishingSide)
+      .sort((a, b) => compareIdsCanonical(a.id, b.id));
+
+    for (let i = 0; i < survivingActive.length; i++) {
+      const piece = survivingActive[i]!;
+      if (piece.frozenTurns > 0 && !ctx.newlyFrozenIds.has(piece.id)) {
+        piece.frozenTurns = Math.max(0, piece.frozenTurns - 1);
+        if (piece.frozenTurns === 0 && getComposure(piece) === 0) {
+          adjustComposure(piece, 1, 'BREAKDOWN_RECOVERY', events, ctx.newlyFrozenIds);
+        }
+      }
+    }
+
+    for (let i = 0; i < survivingActive.length; i++) {
+      const piece = survivingActive[i]!;
+      if (
+        piece.type !== 'CHIMERA' &&
+        (piece.silencedTurns ?? 0) > 0 &&
+        !ctx.newlySilencedIds.has(piece.id)
+      ) {
+        const nextSil = (piece.silencedTurns ?? 0) - 1;
+        if (nextSil <= 0) {
+          piece.silencedTurns = undefined;
+          events.push({ type: 'PIECE_SILENCE_EXPIRED', pieceId: piece.id });
+        } else {
+          piece.silencedTurns = nextSil;
+        }
       }
     }
   }
@@ -893,29 +994,80 @@ function runEndOfTurnSteps7To9(
   }
   drainReactiveQueue(next, ctx, events);
 
-  // 8.2: Decrement burnTurns on all BURNING tiles; extinguish those reaching 0
-  for (let y = 0; y < next.height; y++) {
-    const row = next.tiles[y];
-    if (row === undefined) continue;
-    for (let x = 0; x < next.width; x++) {
-      const tile = row[x];
-      if (tile === undefined || tile.type !== 'BURNING') continue;
-      tile.burnTurns -= 1;
-      if (tile.burnTurns <= 0) {
-        const restored = getExtinguishTargetTile(tile);
-        row[x] = restored;
-        events.push({
-          type: 'TILE_EXTINGUISHED',
-          pos: { x, y },
-          revertedTo: restored.type,
-        });
+  // 8.2–8.3: Single-pass tick for BURNING extinguish, temporary MIASMA, and PRESSURE_PLATE cooldowns
+  if (searchMode) {
+    for (let y = 0; y < next.height; y++) {
+      const row = next.tiles[y];
+      if (row === undefined) continue;
+      for (let x = 0; x < next.width; x++) {
+        let tile = row[x];
+        if (tile === undefined) continue;
+        let cloned = false;
+        if (tile.type === 'BURNING') {
+          const nextBurn = tile.burnTurns - 1;
+          if (nextBurn <= 0) {
+            tile = getExtinguishTargetTile(tile);
+            row[x] = tile;
+            cloned = true;
+          } else {
+            tile = cloneTile(tile);
+            tile.burnTurns = nextBurn;
+            row[x] = tile;
+            cloned = true;
+          }
+        }
+        if (tile.gas !== undefined && tile.gas.kind === 'MIASMA' && tile.gas.turnsRemaining !== null) {
+          if (!cloned) {
+            tile = cloneTile(tile);
+            row[x] = tile;
+            cloned = true;
+          }
+          const nextRem = tile.gas!.turnsRemaining! - 1;
+          if (nextRem <= 0) {
+            tile.gas = undefined;
+          } else {
+            tile.gas!.turnsRemaining = nextRem;
+          }
+        }
+        if (tile.trap !== undefined && tile.trap.kind === 'PRESSURE_PLATE' && tile.trap.cooldown > 0) {
+          if (!cloned) {
+            tile = cloneTile(tile);
+            row[x] = tile;
+          }
+          if (tile.trap!.kind === 'PRESSURE_PLATE') {
+            tile.trap!.cooldown = Math.max(0, tile.trap!.cooldown - 1);
+          }
+        }
       }
     }
-  }
+  } else {
+    for (let y = 0; y < next.height; y++) {
+      const row = next.tiles[y];
+      if (row === undefined) continue;
+      for (let x = 0; x < next.width; x++) {
+        const tile = row[x];
+        if (tile === undefined || tile.type !== 'BURNING') continue;
+        const nextBurn = tile.burnTurns - 1;
+        if (nextBurn <= 0) {
+          const restored = getExtinguishTargetTile(tile);
+          row[x] = restored;
+          events.push({
+            type: 'TILE_EXTINGUISHED',
+            pos: { x, y },
+            revertedTo: restored.type,
+          });
+        } else {
+          const nextTile = cloneTile(tile);
+          nextTile.burnTurns = nextBurn;
+          row[x] = nextTile;
+        }
+      }
+    }
 
-  // 8.3: Tick temporary MIASMA and PRESSURE_PLATE cooldowns
-  tickTemporaryMiasma(next.tiles, next.width, next.height);
-  tickPressurePlateCooldowns(next.tiles, next.width, next.height);
+    // 8.3: Tick temporary MIASMA and PRESSURE_PLATE cooldowns
+    tickTemporaryMiasma(next.tiles, next.width, next.height);
+    tickPressurePlateCooldowns(next.tiles, next.width, next.height);
+  }
 
   // 8.4: Decrement pendingSpawns; spawn skeleton Pawns on empty walkable tiles when 0
   const remainingSpawns: PendingSpawn[] = [];
@@ -972,7 +1124,7 @@ function runEndOfTurnSteps7To9(
   // Step 9: Final win check & turn handoff
   const finalEnd = checkMatchEnd(next.pieces, ctx.kingTracker);
   if (finalEnd !== null) {
-    finishWithMatchEnd(next, finalEnd, events);
+    finishWithMatchEnd(next, finalEnd, events, searchMode);
     return;
   }
 
@@ -985,15 +1137,17 @@ function runEndOfTurnSteps7To9(
     }
   }
 
-  next.fog = recomputeAllFog(next, next.fog);
-  updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events);
+  if (!searchMode) {
+    next.fog = recomputeAllFog(next, next.fog);
+  }
+  updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events, searchMode);
 
   const nextTurn = opponentOf(finishingSide);
   next.turn = nextTurn;
   next.turnNumber += 1;
   next.bonusMovePieceId = null;
 
-  snapshotTurnStartVisibility(next, nextTurn);
+  snapshotTurnStartVisibility(next, nextTurn, searchMode);
 
   events.push({
     type: 'TURN_CHANGED',
@@ -1028,24 +1182,32 @@ function createStepContext(state: GameState): StepContext {
  * Pure event-producing reducer implementing the unified 9-step deterministic turn resolution pipeline.
  * Never mutates `state`; returns original `state` with `error` on invalid actions.
  */
-export function stepGame(state: GameState, action: GameAction): StepResult {
+export function stepGame(
+  state: GameState,
+  action: GameAction,
+  options?: StepGameOptions,
+): StepResult {
   if (state.winner !== null) {
     return reject(state, 'Match has already ended');
   }
 
+  const searchMode = options?.searchMode === true;
   const activeSide = state.turn;
   const ctx = createStepContext(state);
-  const preAlertedIds = state.pieces
-    .filter((p) => p.side === activeSide && p.aggro === 'ALERTED')
-    .map((p) => p.id);
+  const preAlertedIds =
+    state.mode === 'CAMPAIGN'
+      ? state.pieces
+          .filter((p) => p.side === activeSide && p.aggro === 'ALERTED')
+          .map((p) => p.id)
+      : [];
 
   // Anti-softlock / turn pass action
   if (action.type === 'END_TURN') {
-    const next = cloneGameState(state);
+    const next = searchMode ? cloneGameStateForSearch(state) : cloneGameState(state);
     const events: GameEvent[] = [];
-    next.actionHistory.push(cloneAction(action));
+    if (!searchMode) next.actionHistory.push(cloneAction(action));
     next.bonusMovePieceId = null;
-    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events);
+    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events, searchMode);
     return { nextState: next, events };
   }
 
@@ -1072,7 +1234,14 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
 
   // Handle MOVE
   if (action.type === 'MOVE') {
-    const legalMove = findLegalMove(state, actorOrig, action.to, state.bonusMovePieceId);
+    const pre = options?.precomputedLegalMove;
+    const legalMove =
+      pre !== undefined &&
+      pre.pieceId === actorOrig.id &&
+      coordEquals(pre.to, action.to) &&
+      coordEquals(pre.from, actorOrig.pos)
+        ? pre
+        : findLegalMove(state, actorOrig, action.to, state.bonusMovePieceId);
     if (legalMove === undefined) {
       return reject(
         state,
@@ -1081,13 +1250,22 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
     }
 
     // Disobedience check: if fragile piece refuses, turn does NOT change
-    const disob = evaluateDisobedience(
-      state,
-      actorOrig,
-      legalMove,
-      state.fog[activeSide],
-      state.turnNumber,
-    );
+    const disob = searchMode
+      ? evaluateDisobedience(
+          state,
+          actorOrig,
+          legalMove,
+          undefined,
+          state.turnNumber,
+          (c) => isCoordVisibleToSide(state, activeSide, c),
+        )
+      : evaluateDisobedience(
+          state,
+          actorOrig,
+          legalMove,
+          state.fog[activeSide],
+          state.turnNumber,
+        );
     if (disob.disobeyed) {
       return {
         nextState: state,
@@ -1102,9 +1280,9 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
       };
     }
 
-    const next = cloneGameState(state);
+    const next = searchMode ? cloneGameStateForSearch(state) : cloneGameState(state);
     const events: GameEvent[] = [];
-    next.actionHistory.push(cloneAction(action));
+    if (!searchMode) next.actionHistory.push(cloneAction(action));
     next.bonusMovePieceId = null;
 
     const mover = getPieceById(next.pieces, action.pieceId)!;
@@ -1233,7 +1411,7 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
 
           // Berserk Chain (if active and not silenced): bonus move + knockback adjacent piece
           if (mover.berserkReady === true && !isSilenced(mover)) {
-            delete mover.berserkReady;
+            mover.berserkReady = undefined;
             berserkBonusGranted = true;
             const kicked = findCanonicalAdjacentPiece(next.pieces, mover.pos, mover.id);
             events.push({
@@ -1338,13 +1516,15 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
     // Step 5: Mid-turn win check
     const matchEnd = checkMatchEnd(next.pieces, ctx.kingTracker);
     if (matchEnd !== null) {
-      finishWithMatchEnd(next, matchEnd, events);
+      finishWithMatchEnd(next, matchEnd, events, searchMode);
       return { nextState: next, events };
     }
 
     // Step 6: Fog, Campaign alerts, and bonus move check (Berserk Chain or DASH_ON_REVEAL)
-    next.fog = recomputeAllFog(next, next.fog);
-    updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events);
+    if (!searchMode) {
+      next.fog = recomputeAllFog(next, next.fog);
+    }
+    updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events, searchMode);
 
     if (moverSurvived && survivingMover !== undefined && survivingMover.frozenTurns === 0) {
       if (berserkBonusGranted) {
@@ -1356,8 +1536,10 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
         hasTrait(survivingMover, 'DASH_ON_REVEAL', next.factions) &&
         !survivingMover.usedDashThisTurn &&
         !survivingMover.wasVisibleAtTurnStart &&
-        next.fog[opponentOf(survivingMover.side)][survivingMover.pos.y]?.[survivingMover.pos.x] ===
-          'VISIBLE'
+        (searchMode
+          ? isCoordVisibleToSide(next, opponentOf(survivingMover.side), survivingMover.pos)
+          : next.fog[opponentOf(survivingMover.side)][survivingMover.pos.y]?.[survivingMover.pos.x] ===
+            'VISIBLE')
       ) {
         survivingMover.usedDashThisTurn = true;
         next.bonusMovePieceId = survivingMover.id;
@@ -1366,7 +1548,7 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
     }
 
     // Steps 7–9: End-of-turn environment, psychology, auras, spikes, global counters, final win check & turn handoff
-    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events);
+    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events, searchMode);
     return { nextState: next, events };
   }
 
@@ -1390,9 +1572,9 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
       return reject(state, 'BREAK_WALL target must be a WALL tile');
     }
 
-    const next = cloneGameState(state);
+    const next = searchMode ? cloneGameStateForSearch(state) : cloneGameState(state);
     const events: GameEvent[] = [];
-    next.actionHistory.push(cloneAction(action));
+    if (!searchMode) next.actionHistory.push(cloneAction(action));
     next.bonusMovePieceId = null;
 
     next.tiles[action.target.y]![action.target.x] = createTile('PLAIN');
@@ -1402,10 +1584,12 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
       byPieceId: actorOrig.id,
     });
 
-    next.fog = recomputeAllFog(next, next.fog);
-    updateCampaignAlerts(next, [], [], events);
+    if (!searchMode) {
+      next.fog = recomputeAllFog(next, next.fog);
+    }
+    updateCampaignAlerts(next, [], [], events, searchMode);
 
-    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events);
+    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events, searchMode);
     return { nextState: next, events };
   }
 
@@ -1418,9 +1602,9 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
       return reject(state, 'PUSH target must be an orthogonally adjacent enemy piece');
     }
 
-    const next = cloneGameState(state);
+    const next = searchMode ? cloneGameStateForSearch(state) : cloneGameState(state);
     const events: GameEvent[] = [];
-    next.actionHistory.push(cloneAction(action));
+    if (!searchMode) next.actionHistory.push(cloneAction(action));
     next.bonusMovePieceId = null;
 
     const pusher = getPieceById(next.pieces, actorOrig.id)!;
@@ -1447,14 +1631,16 @@ export function stepGame(state: GameState, action: GameAction): StepResult {
 
     const matchEnd = checkMatchEnd(next.pieces, ctx.kingTracker);
     if (matchEnd !== null) {
-      finishWithMatchEnd(next, matchEnd, events);
+      finishWithMatchEnd(next, matchEnd, events, searchMode);
       return { nextState: next, events };
     }
 
-    next.fog = recomputeAllFog(next, next.fog);
-    updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events);
+    if (!searchMode) {
+      next.fog = recomputeAllFog(next, next.fog);
+    }
+    updateCampaignAlerts(next, ctx.damagedEnemyIds, ctx.enemyCombatCoords, events, searchMode);
 
-    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events);
+    runEndOfTurnSteps7To9(next, activeSide, preAlertedIds, ctx, events, searchMode);
     return { nextState: next, events };
   }
 

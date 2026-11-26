@@ -4,7 +4,7 @@
  * canonical tile scan order (y asc, then x asc), canonical ID order (UTF-16 lexicographical).
  */
 
-import { cloneCardinalDir, cloneTrap, coordEquals, createTile, inBounds } from './board';
+import { cloneCardinalDir, cloneTile, cloneTrap, coordEquals, createTile, inBounds } from './board';
 import {
   CardinalDir,
   Coord,
@@ -456,10 +456,7 @@ export function resolveGasDetonation(
     const tile = row?.[pos.x];
     if (row === undefined || tile === undefined) continue;
 
-    // 1) Clear MIASMA
-    delete tile.gas;
-
-    // 2) CRACKED -> PIT collapse (lethal even through shield)
+    // 1) CRACKED -> PIT collapse (lethal even through shield; BLAST clears MIASMA)
     if (tile.type === 'CRACKED') {
       collapseCrackedTile(tiles, width, height, pos, 'BLAST', events);
       const victimIdx = pieces.findIndex((p) => p.pos.x === pos.x && p.pos.y === pos.y);
@@ -478,12 +475,17 @@ export function resolveGasDetonation(
       continue;
     }
 
-    // 3) WALL / PIT do not burn
+    // 2) WALL / PIT do not burn (clear MIASMA via copy-on-write clone)
     if (tile.type === 'WALL' || tile.type === 'PIT') {
+      if (tile.gas !== undefined) {
+        const cleaned = cloneTile(tile);
+        cleaned.gas = undefined;
+        row[pos.x] = cleaned;
+      }
       continue;
     }
 
-    // Ignite tile to BURNING (2 turns)
+    // 3) Ignite tile to BURNING (2 turns; buildIgnitedTile produces a fresh tile without gas)
     row[pos.x] = buildIgnitedTile(tile, DEFAULT_BURN_TURNS);
     events.push({
       type: 'TILE_IGNITED',
@@ -568,7 +570,11 @@ export function triggerPressurePlate(
   }
 
   firedPlateIds.add(plate.id);
-  plate.cooldown = plate.maxCooldown;
+  const nextTile = cloneTile(tile);
+  if (nextTile.trap?.kind === 'PRESSURE_PLATE') {
+    nextTile.trap.cooldown = plate.maxCooldown;
+  }
+  tiles[platePos.y]![platePos.x] = nextTile;
 
   events.push({
     type: 'PLATE_TRIGGERED',
@@ -614,7 +620,11 @@ export function fireArrowEmitter(
     return { fired: false, path: [], firstMiasmaHit: null, killedPieces: [], shieldBrokenPieceIds: [] };
   }
   if (emitter.ammo !== null) {
-    emitter.ammo -= 1;
+    const nextTile = cloneTile(emitterTile);
+    if (nextTile.trap?.kind === 'ARROW_EMITTER' && nextTile.trap.ammo !== null) {
+      nextTile.trap.ammo -= 1;
+    }
+    tiles[emitterPos.y]![emitterPos.x] = nextTile;
   }
 
   const path: Coord[] = [];
@@ -715,7 +725,11 @@ export function advanceAllSpikes(
       const tile = row[x];
       if (tile?.trap?.kind !== 'SPIKES') continue;
       const nextPhase = ((tile.trap.phase + 1) % 3) as SpikePhase;
-      tile.trap.phase = nextPhase;
+      const nextTile = cloneTile(tile);
+      if (nextTile.trap?.kind === 'SPIKES') {
+        nextTile.trap.phase = nextPhase;
+      }
+      row[x] = nextTile;
       changes.push({ at: { x, y }, phase: nextPhase });
     }
   }
@@ -828,11 +842,15 @@ export function tickTemporaryMiasma(
     for (let x = 0; x < width; x++) {
       const tile = row[x];
       if (tile?.gas?.kind !== 'MIASMA' || tile.gas.turnsRemaining === null) continue;
-      tile.gas.turnsRemaining -= 1;
-      if (tile.gas.turnsRemaining <= 0) {
-        delete tile.gas;
+      const nextTile = cloneTile(tile);
+      const nextRem = tile.gas.turnsRemaining - 1;
+      if (nextRem <= 0) {
+        nextTile.gas = undefined;
         dissipated.push({ x, y });
+      } else if (nextTile.gas !== undefined) {
+        nextTile.gas.turnsRemaining = nextRem;
       }
+      row[x] = nextTile;
     }
   }
   return dissipated;
@@ -852,7 +870,11 @@ export function tickPressurePlateCooldowns(
     for (let x = 0; x < width; x++) {
       const tile = row[x];
       if (tile?.trap?.kind === 'PRESSURE_PLATE' && tile.trap.cooldown > 0) {
-        tile.trap.cooldown = Math.max(0, tile.trap.cooldown - 1);
+        const nextTile = cloneTile(tile);
+        if (nextTile.trap?.kind === 'PRESSURE_PLATE') {
+          nextTile.trap.cooldown = Math.max(0, tile.trap.cooldown - 1);
+        }
+        row[x] = nextTile;
       }
     }
   }

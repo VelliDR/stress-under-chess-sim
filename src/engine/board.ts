@@ -144,41 +144,29 @@ export function cloneTrap(trap: TileTrap): TileTrap {
 }
 
 export function cloneTile(tile: TileState): TileState {
-  const copy: TileState = {
+  return {
     type: tile.type,
     burnTurns: tile.burnTurns,
+    revertType: tile.revertType,
+    underlyingType: tile.underlyingType,
+    gas:
+      tile.gas !== undefined
+        ? { kind: tile.gas.kind, turnsRemaining: tile.gas.turnsRemaining }
+        : undefined,
+    trap: tile.trap !== undefined ? cloneTrap(tile.trap) : undefined,
   };
-  if (tile.revertType !== undefined) {
-    copy.revertType = tile.revertType;
-  }
-  if (tile.underlyingType !== undefined) {
-    copy.underlyingType = tile.underlyingType;
-  }
-  if (tile.gas !== undefined) {
-    copy.gas = {
-      kind: tile.gas.kind,
-      turnsRemaining: tile.gas.turnsRemaining,
-    };
-  }
-  if (tile.trap !== undefined) {
-    copy.trap = cloneTrap(tile.trap);
-  }
-  return copy;
 }
 
 export function cloneChimeraForm(form: ChimeraForm): ChimeraForm {
-  const copy: ChimeraForm = {
+  return {
     sourceType: form.sourceType,
     copiedTraits: form.copiedTraits.slice(),
+    saintEcho: form.saintEcho,
   };
-  if (form.saintEcho !== undefined) {
-    copy.saintEcho = form.saintEcho;
-  }
-  return copy;
 }
 
 export function clonePiece(piece: Piece): Piece {
-  const copy: Piece = {
+  return {
     id: piece.id,
     side: piece.side,
     type: piece.type,
@@ -190,19 +178,17 @@ export function clonePiece(piece: Piece): Piece {
     aggro: piece.aggro,
     usedDashThisTurn: piece.usedDashThisTurn,
     wasVisibleAtTurnStart: piece.wasVisibleAtTurnStart,
+    isBoss: piece.isBoss,
+    miasmaExposure: piece.miasmaExposure,
+    composure: piece.composure,
+    driftSign: piece.driftSign,
+    faithCharge: piece.faithCharge,
+    madnessCharge: piece.madnessCharge,
+    berserkReady: piece.berserkReady,
+    silencedTurns: piece.silencedTurns,
+    absorbedForms:
+      piece.absorbedForms !== undefined ? piece.absorbedForms.map(cloneChimeraForm) : undefined,
   };
-  if (piece.isBoss !== undefined) copy.isBoss = piece.isBoss;
-  if (piece.miasmaExposure !== undefined) copy.miasmaExposure = piece.miasmaExposure;
-  if (piece.composure !== undefined) copy.composure = piece.composure;
-  if (piece.driftSign !== undefined) copy.driftSign = piece.driftSign;
-  if (piece.faithCharge !== undefined) copy.faithCharge = piece.faithCharge;
-  if (piece.madnessCharge !== undefined) copy.madnessCharge = piece.madnessCharge;
-  if (piece.berserkReady !== undefined) copy.berserkReady = piece.berserkReady;
-  if (piece.silencedTurns !== undefined) copy.silencedTurns = piece.silencedTurns;
-  if (piece.absorbedForms !== undefined) {
-    copy.absorbedForms = piece.absorbedForms.map(cloneChimeraForm);
-  }
-  return copy;
 }
 
 export function createTile(
@@ -211,26 +197,17 @@ export function createTile(
   revertType?: 'PLAIN' | 'WATCHTOWER',
   v3?: TileV3Fields,
 ): TileState {
-  const tile: TileState = {
+  return {
     type,
     burnTurns: type === 'BURNING' ? burnTurns : 0,
+    revertType,
+    underlyingType: v3?.underlyingType,
+    gas:
+      v3?.gas !== undefined
+        ? { kind: v3.gas.kind, turnsRemaining: v3.gas.turnsRemaining }
+        : undefined,
+    trap: v3?.trap !== undefined ? cloneTrap(v3.trap) : undefined,
   };
-  if (revertType !== undefined) {
-    tile.revertType = revertType;
-  }
-  if (v3?.underlyingType !== undefined) {
-    tile.underlyingType = v3.underlyingType;
-  }
-  if (v3?.gas !== undefined) {
-    tile.gas = {
-      kind: v3.gas.kind,
-      turnsRemaining: v3.gas.turnsRemaining,
-    };
-  }
-  if (v3?.trap !== undefined) {
-    tile.trap = cloneTrap(v3.trap);
-  }
-  return tile;
 }
 
 export function createEmptyTiles(
@@ -865,12 +842,13 @@ export function resolveMoveOutcome(
   piece: Piece,
   to: Coord,
   explicitApproachPath?: readonly Coord[],
+  precomputedArmorPierce?: boolean,
 ): SlideResolution {
   const from: Coord = { x: piece.pos.x, y: piece.pos.y };
   const isKnightJump =
     piece.type === 'KNIGHT' || (piece.type === 'CHIMERA' && isKnightMove(from, to));
   const immuneToIce = board.factions[piece.side] === 'FROST_WARDENS';
-  const armorPierce = hasArmorPierce(board, piece);
+  const armorPierce = precomputedArmorPierce ?? hasArmorPierce(board, piece);
   const approachPath =
     explicitApproachPath !== undefined
       ? explicitApproachPath.map((c) => ({ x: c.x, y: c.y }))
@@ -958,13 +936,19 @@ export function getLegalMoves(
     return [];
   }
 
+  const inMadness = isInFriendlyMadnessAura(board, piece);
+  const armorPierce =
+    inMadness ||
+    (piece.type === 'CHIMERA' &&
+      piece.absorbedForms !== undefined &&
+      piece.absorbedForms.some((f) => f.saintEcho === 'MADNESS_PIERCE'));
+
   if (isStressDriftActive(piece)) {
-    const ignoreMiasma = hasFrenzyHaste(board, piece);
-    const driftedTargets = computeDriftedMoveTargets(board, piece, ignoreMiasma);
+    const driftedTargets = computeDriftedMoveTargets(board, piece, inMadness);
     const moves: LegalMove[] = [];
     for (let i = 0; i < driftedTargets.length; i++) {
       const dt = driftedTargets[i]!;
-      const resolution = resolveMoveOutcome(board, piece, dt.to, dt.path);
+      const resolution = resolveMoveOutcome(board, piece, dt.to, dt.path, armorPierce);
       const finalTile = resolution.finalPos !== null ? getTile(board, resolution.finalPos) : null;
       const endsOnExtendedSpikes =
         finalTile?.trap?.kind === 'SPIKES' && finalTile.trap.phase === 2;
@@ -984,12 +968,24 @@ export function getLegalMoves(
     return moves;
   }
 
-  const rawTargets = getRawMoveTargets(board, piece);
+  const extraRange =
+    inMadness &&
+    (piece.type === 'KING' ||
+      piece.type === 'PAWN' ||
+      piece.type === 'SAINT_FAITH' ||
+      piece.type === 'SAINT_MADNESS' ||
+      piece.type === 'CHIMERA')
+      ? 1
+      : 0;
+  const rawTargets = getRawMoveTargets(board, piece, {
+    ignoreMiasma: inMadness || piece.type === 'CHIMERA',
+    extraRange,
+  });
   const moves: LegalMove[] = [];
 
   for (let i = 0; i < rawTargets.length; i++) {
     const to = rawTargets[i]!;
-    const resolution = resolveMoveOutcome(board, piece, to);
+    const resolution = resolveMoveOutcome(board, piece, to, undefined, armorPierce);
     const finalTile = resolution.finalPos !== null ? getTile(board, resolution.finalPos) : null;
     const endsOnExtendedSpikes =
       finalTile?.trap?.kind === 'SPIKES' && finalTile.trap.phase === 2;

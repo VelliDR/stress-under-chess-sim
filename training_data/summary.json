@@ -1,0 +1,279 @@
+{
+  "startedAt": "2026-11-25T20:38:08.424Z",
+  "finishedAt": "2026-11-26T01:41:54.761Z",
+  "dryRun": false,
+  "config": {
+    "selfplayUntil": "2026-11-26T04:30:00+03:00",
+    "hardDeadline": "2026-11-26T05:00:00+03:00",
+    "workers": 6,
+    "batchGames": 16,
+    "budgetMs": 50,
+    "maxEvalSamples": 180000,
+    "maxBeliefSamples": 6000,
+    "spsaItersRequested": 30,
+    "spsaItersCompleted": 30,
+    "gatePairs": 48
+  },
+  "selfPlay": {
+    "totalGames": 42912,
+    "totalPlies": 2652187,
+    "avgPlies": 61.8,
+    "playerWins": 18915,
+    "enemyWins": 17193,
+    "draws": 6804,
+    "workerErrors": 0,
+    "evalPositionsSeen": 1189938,
+    "evalPositionsSaved": 180000,
+    "beliefSnapshotsSeen": 140475,
+    "beliefSnapshotsSaved": 6000,
+    "evalDatasetGzBytes": 4454481,
+    "beliefDatasetGzBytes": 192820,
+    "endReasons": {
+      "KING_CAPTURED": 34292,
+      "MAX_PLIES_DRAW": 6797,
+      "KING_SKEWERED": 1281,
+      "KING_SUFFOCATED": 375,
+      "MUTUAL_ELIMINATION": 7,
+      "KING_BURNED": 117,
+      "KING_FELL_IN_PIT": 39,
+      "KING_INCINERATED": 4
+    },
+    "v3Events": {
+      "PIECE_FELL_IN_PIT": 2967,
+      "PIECE_BREAKDOWN": 63140,
+      "PLATE_TRIGGERED": 80022,
+      "GAS_CHAIN_DETONATED": 17484,
+      "FAITH_ULTIMATE_TRIGGERED": 275307,
+      "TILE_COLLAPSED": 33066,
+      "PIECE_SKEWERED": 31934,
+      "PIECE_FROZEN": 32652,
+      "MADNESS_ULTIMATE_TRIGGERED": 169598,
+      "BERSERK_CHAIN_TRIGGERED": 29846,
+      "PIECE_PUSHED": 21107,
+      "CHIMERA_EVOLVED": 8376,
+      "PIECE_DISOBEYED": 158
+    }
+  },
+  "beliefTraining": {
+    "baseValLift": 0.2032,
+    "trainedValLift": 0.2483,
+    "acceptedWeights": {
+      "silhouetteCenterWeight": 90,
+      "silhouetteRing1Weight": 65,
+      "silhouetteRing2Weight": 39.5,
+      "memoryDecayPerTurn": 0.937,
+      "sniperRayWeight": 1.658,
+      "unexploredAmbushPrior": 18.5,
+      "ghostAmbushPenaltyRatio": 0.34
+    }
+  },
+  "mlpTraining": {
+    "trainPositions": 156837,
+    "valPositions": 23163,
+    "baseValBce": 0.78148,
+    "bestValBce": 0.74609,
+    "gateA": {
+      "winsA": 32,
+      "draws": 19,
+      "winsB": 45,
+      "eloDiff": -47.3,
+      "eloError95": 63.4,
+      "sprtLlr": -2.28
+    },
+    "acceptedEnabled": false
+  },
+  "spsaTraining": {
+    "iterationsCompleted": 30,
+    "history": [
+      {
+        "iter": 1,
+        "winsPlus": 11,
+        "draws": 10,
+        "winsMinus": 9
+      },
+      {
+        "iter": 2,
+        "winsPlus": 11,
+        "draws": 10,
+        "winsMinus": 9
+      },
+      {
+        "iter": 3,
+        "winsPlus": 13,
+        "draws": 8,
+        "winsMinus": 9
+      },
+      {
+        "iter": 4,
+        "winsPlus": 8,
+        "draws": 8,
+        "winsMinus": 14
+      },
+      {
+        "iter": 5,
+        "winsPlus": 6,
+        "draws": 7,
+        "winsMinus": 17
+      },
+      {
+        "iter": 6,
+        "winsPlus": 11,
+        "draws": 7,
+        "winsMinus": 12
+      },
+      {
+        "iter": 7,
+        "winsPlus": 10,
+        "draws": 8,
+        "winsMinus": 12
+      },
+      {
+        "iter": 8,
+        "winsPlus": 12,
+        "draws": 5,
+        "winsMinus": 13
+      },
+      {
+        "iter": 9,
+        "winsPlus": 16,
+        "draws": 5,
+        "winsMinus": 9
+      },
+      {
+        "iter": 10,
+        "winsPlus": 10,
+        "draws": 6,
+        "winsMinus": 14
+      },
+      {
+        "iter": 11,
+        "winsPlus": 12,
+        "draws": 6,
+        "winsMinus": 12
+      },
+      {
+        "iter": 12,
+        "winsPlus": 11,
+        "draws": 8,
+        "winsMinus": 11
+      },
+      {
+        "iter": 13,
+        "winsPlus": 9,
+        "draws": 10,
+        "winsMinus": 11
+      },
+      {
+        "iter": 14,
+        "winsPlus": 7,
+        "draws": 13,
+        "winsMinus": 10
+      },
+      {
+        "iter": 15,
+        "winsPlus": 13,
+        "draws": 5,
+        "winsMinus": 12
+      },
+      {
+        "iter": 16,
+        "winsPlus": 15,
+        "draws": 6,
+        "winsMinus": 9
+      },
+      {
+        "iter": 17,
+        "winsPlus": 13,
+        "draws": 6,
+        "winsMinus": 11
+      },
+      {
+        "iter": 18,
+        "winsPlus": 10,
+        "draws": 5,
+        "winsMinus": 15
+      },
+      {
+        "iter": 19,
+        "winsPlus": 11,
+        "draws": 7,
+        "winsMinus": 12
+      },
+      {
+        "iter": 20,
+        "winsPlus": 10,
+        "draws": 4,
+        "winsMinus": 16
+      },
+      {
+        "iter": 21,
+        "winsPlus": 9,
+        "draws": 7,
+        "winsMinus": 14
+      },
+      {
+        "iter": 22,
+        "winsPlus": 11,
+        "draws": 8,
+        "winsMinus": 11
+      },
+      {
+        "iter": 23,
+        "winsPlus": 14,
+        "draws": 7,
+        "winsMinus": 9
+      },
+      {
+        "iter": 24,
+        "winsPlus": 11,
+        "draws": 7,
+        "winsMinus": 12
+      },
+      {
+        "iter": 25,
+        "winsPlus": 7,
+        "draws": 9,
+        "winsMinus": 14
+      },
+      {
+        "iter": 26,
+        "winsPlus": 12,
+        "draws": 4,
+        "winsMinus": 14
+      },
+      {
+        "iter": 27,
+        "winsPlus": 11,
+        "draws": 10,
+        "winsMinus": 9
+      },
+      {
+        "iter": 28,
+        "winsPlus": 11,
+        "draws": 8,
+        "winsMinus": 11
+      },
+      {
+        "iter": 29,
+        "winsPlus": 9,
+        "draws": 7,
+        "winsMinus": 14
+      },
+      {
+        "iter": 30,
+        "winsPlus": 11,
+        "draws": 9,
+        "winsMinus": 10
+      }
+    ],
+    "gateB": {
+      "winsA": 37,
+      "draws": 16,
+      "winsB": 43,
+      "eloDiff": -21.7,
+      "eloError95": 64.3,
+      "sprtLlr": -1.31
+    },
+    "acceptedSpsaWeights": false
+  }
+}

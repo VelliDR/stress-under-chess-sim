@@ -136,6 +136,71 @@ export const SKIRMISH_AI_TEMPLATES: readonly SkirmishArmyTemplate[] = [
   },
 ];
 
+export const V3_SKIRMISH_AI_TEMPLATES: readonly SkirmishArmyTemplate[] = [
+  {
+    id: 'ocakli-bastion',
+    name: 'Ocaklı Kalkan Duvarı',
+    description:
+      'Ocaklı (6), Kale (5), At (3), Fil (3), Gözcü Piyon (2) ve Piyon (1) ile 7×7 susturma ve kalkan kalesi.',
+    preferredFaction: 'FROST_WARDENS',
+    units: [
+      { type: 'SAINT_FAITH', traits: [] },
+      { type: 'ROOK', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'BISHOP', traits: [] },
+      { type: 'PAWN', traits: ['SCOUT'] },
+      { type: 'PAWN', traits: [] },
+    ],
+  },
+  {
+    id: 'madness-raiders',
+    name: 'Kanlı Cinnet Akını',
+    description:
+      'Meczup (6), 3 At (9), Fil (3) ve Gözcü Piyon (2) ile kalkan delen sis pususu ve Cinnet zinciri.',
+    preferredFaction: 'RAIDERS',
+    units: [
+      { type: 'SAINT_MADNESS', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'BISHOP', traits: [] },
+      { type: 'PAWN', traits: ['SCOUT'] },
+    ],
+  },
+  {
+    id: 'chimera-siege',
+    name: 'Gulyabani Kuşatması',
+    description:
+      'Gulyabani (10), Kale (5), At (3) ve Gözcü Piyon (2) ile efsun tutmaz DNA avcısı ve duvar kırıcı.',
+    preferredFaction: 'SIEGE_ENGINEERS',
+    units: [
+      { type: 'CHIMERA', traits: [] },
+      { type: 'ROOK', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'PAWN', traits: ['SCOUT'] },
+    ],
+  },
+  {
+    id: 'twin-cult-ambush',
+    name: 'İkili Tarikat Pususu',
+    description:
+      'Ocaklı (6), Meczup (6), At (3), Fil (3) ve Gözcü Piyon (2) ile çift aura psikoloji savaşı.',
+    preferredFaction: 'NECROMANCERS',
+    units: [
+      { type: 'SAINT_FAITH', traits: [] },
+      { type: 'SAINT_MADNESS', traits: [] },
+      { type: 'KNIGHT', traits: [] },
+      { type: 'BISHOP', traits: [] },
+      { type: 'PAWN', traits: ['SCOUT'] },
+    ],
+  },
+];
+
+export const ALL_SKIRMISH_AI_TEMPLATES: readonly SkirmishArmyTemplate[] = [
+  ...SKIRMISH_AI_TEMPLATES,
+  ...V3_SKIRMISH_AI_TEMPLATES,
+];
+
 /**
  * Calculates exact Skirmish point cost of a unit list (King is free, Scout Pawn costs 2).
  */
@@ -156,13 +221,17 @@ export function computeSkirmishRosterCost(
   return total;
 }
 
-export function selectSkirmishAiTemplate(rngState: number): {
+export function selectSkirmishAiTemplate(
+  rngState: number,
+  includeV3 = false,
+): {
   template: SkirmishArmyTemplate;
   nextRngState: number;
 } {
-  const picked = pickOne(rngState, SKIRMISH_AI_TEMPLATES);
+  const pool = includeV3 ? ALL_SKIRMISH_AI_TEMPLATES : SKIRMISH_AI_TEMPLATES;
+  const picked = pickOne(rngState, pool);
   return {
-    template: picked.value ?? SKIRMISH_AI_TEMPLATES[0]!,
+    template: picked.value ?? pool[0]!,
     nextRngState: picked.nextState,
   };
 }
@@ -226,32 +295,57 @@ export function deploySkirmishAiArmy(
   const remainingBack = shuffledBack.value.slice();
   const remainingFront = shuffledFront.value.slice();
 
+  // Collect terrain landmarks across the board for smart, deterministic deployment alignment
+  const watchtowerXs: number[] = [];
+  const icePitXs: number[] = [];
+  const miasmaXs: number[] = [];
+  const wallXs: number[] = [];
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const t = tiles[y]?.[x];
+      if (t === undefined) continue;
+      if (t.type === 'WATCHTOWER') watchtowerXs.push(x);
+      if (t.type === 'ICE' || t.type === 'PIT') icePitXs.push(x);
+      if (t.type === 'WALL') wallXs.push(x);
+      if (t.gas?.kind === 'MIASMA') miasmaXs.push(x);
+    }
+  }
+
+  const minXDist = (x: number, targets: readonly number[]): number => {
+    if (targets.length === 0) return 99;
+    let best = 99;
+    for (let i = 0; i < targets.length; i++) {
+      const d = Math.abs(x - targets[i]!);
+      if (d < best) best = d;
+    }
+    return best;
+  };
+
   const pieces: Piece[] = [];
 
-  // Place King first on back row closest to board center
+  // Place King first on safest back-row slot (away from ICE/PIT lanes, near center or wall cover)
   const kingUnit = roster.find((u) => u.type === 'KING');
   const centerX = (width - 1) / 2;
 
-  const takeSlot = (preferFront: boolean, centerBias = false): Coord | null => {
+  const takeBestSlot = (
+    preferFront: boolean,
+    scoreFn: (slot: Coord) => number,
+  ): Coord | null => {
     const primary = preferFront ? remainingFront : remainingBack;
     const secondary = preferFront ? remainingBack : remainingFront;
     const pool = primary.length > 0 ? primary : secondary;
     if (pool.length === 0) return null;
 
-    if (centerBias) {
-      let bestIdx = 0;
-      let bestDist = Math.abs(pool[0]!.x - centerX);
-      for (let i = 1; i < pool.length; i++) {
-        const d = Math.abs(pool[i]!.x - centerX);
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = i;
-        }
+    let bestIdx = 0;
+    let bestScore = scoreFn(pool[0]!);
+    for (let i = 1; i < pool.length; i++) {
+      const s = scoreFn(pool[i]!);
+      if (s > bestScore) {
+        bestScore = s;
+        bestIdx = i;
       }
-      return pool.splice(bestIdx, 1)[0]!;
     }
-
-    return pool.shift()!;
+    return pool.splice(bestIdx, 1)[0]!;
   };
 
   const pushUnit = (unit: RosterUnit, pos: Coord): void => {
@@ -271,15 +365,52 @@ export function deploySkirmishAiArmy(
   };
 
   if (kingUnit !== undefined) {
-    const slot = takeSlot(false, true);
+    const slot = takeBestSlot(false, (c) => {
+      const forwardY = side === 'ENEMY' ? c.y + 1 : c.y - 1;
+      const forwardTile = tiles[forwardY]?.[c.x];
+      const pitDanger = minXDist(c.x, icePitXs) === 0 ? -18 : 0;
+      const wallShield = forwardTile?.type === 'WALL' ? 14 : 0;
+      const centerPref = -Math.abs(c.x - centerX) * 3;
+      return centerPref + pitDanger + wallShield;
+    });
     if (slot !== null) pushUnit(kingUnit, slot);
   }
 
-  // Place non-King units: Pawns prefer front row, heavy pieces prefer back row
+  // Place Saints next near center of back/front so their 5x5 auras cover maximum allies from Turn 1
   for (let i = 0; i < roster.length; i++) {
     const unit = roster[i]!;
-    if (unit.type === 'KING') continue;
-    const slot = takeSlot(unit.type === 'PAWN', false);
+    if (unit.type !== 'SAINT_FAITH' && unit.type !== 'SAINT_MADNESS') continue;
+    const slot = takeBestSlot(unit.type === 'SAINT_MADNESS', (c) => -Math.abs(c.x - centerX) * 5);
+    if (slot !== null) pushUnit(unit, slot);
+  }
+
+  // Place remaining units with terrain synergy (SCOUT -> Watchtower, CHIMERA -> Miasma, ROOK/PUSHER -> Ice/Pit/Walls)
+  for (let i = 0; i < roster.length; i++) {
+    const unit = roster[i]!;
+    if (unit.type === 'KING' || unit.type === 'SAINT_FAITH' || unit.type === 'SAINT_MADNESS') {
+      continue;
+    }
+    const preferFront = unit.type === 'PAWN' || unit.type === 'CHIMERA';
+    const slot = takeBestSlot(preferFront, (c) => {
+      let s = 0;
+      if (unit.traits.includes('SCOUT') && watchtowerXs.length > 0) {
+        s -= minXDist(c.x, watchtowerXs) * 10;
+      }
+      if (unit.type === 'CHIMERA' && miasmaXs.length > 0) {
+        s -= minXDist(c.x, miasmaXs) * 8;
+      }
+      if ((unit.traits.includes('PUSHER') || unit.type === 'ROOK') && icePitXs.length > 0) {
+        s -= minXDist(c.x, icePitXs) * 6;
+      }
+      if (unit.type === 'ROOK' && wallXs.length > 0) {
+        // Open file preference unless flanking
+        s += minXDist(c.x, wallXs) === 0 ? -4 : 4;
+      }
+      if (unit.type === 'KNIGHT' || unit.type === 'BISHOP') {
+        s -= Math.abs(c.x - centerX) * 2;
+      }
+      return s;
+    });
     if (slot !== null) pushUnit(unit, slot);
   }
 

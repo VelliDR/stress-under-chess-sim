@@ -164,7 +164,7 @@ export function adjustComposure(
   if (clamped === from) return from;
 
   if (clamped === 3) {
-    delete piece.composure;
+    piece.composure = undefined;
   } else {
     piece.composure = clamped;
   }
@@ -359,6 +359,7 @@ export function evaluateDisobedience(
   move: LegalMove,
   viewerFog?: readonly (readonly VisibilityLevel[])[],
   turnNumber = 1,
+  isSquareVisible?: (coord: Coord) => boolean,
 ): DisobedienceResult {
   if (getComposure(piece) !== 1) return { disobeyed: false };
   if (
@@ -385,11 +386,14 @@ export function evaluateDisobedience(
   for (let i = 0; i < board.pieces.length; i++) {
     const enemy = board.pieces[i]!;
     if (enemy.side === piece.side) continue;
-    if (
-      viewerFog !== undefined &&
-      viewerFog[enemy.pos.y]?.[enemy.pos.x] !== 'VISIBLE'
-    ) {
-      continue;
+    if (viewerFog !== undefined) {
+      if (viewerFog[enemy.pos.y]?.[enemy.pos.x] !== 'VISIBLE') {
+        continue;
+      }
+    } else if (isSquareVisible !== undefined) {
+      if (!isSquareVisible(enemy.pos)) {
+        continue;
+      }
     }
     if (canPieceAttackSquare(board, enemy, move.to, piece.id)) {
       threatenedByVisibleEnemy = true;
@@ -596,7 +600,7 @@ export function runSaintEndOfTurnAuras(
       });
 
       if (nextCharge >= 3) {
-        delete ally.faithCharge;
+        ally.faithCharge = undefined;
 
         // 1. Grant / refresh SHIELDED on target ally
         if (!ally.traits.includes('SHIELDED')) {
@@ -618,9 +622,9 @@ export function runSaintEndOfTurnAuras(
 
           if (target.side === finishingSide) {
             target.frozenTurns = 0;
-            delete target.miasmaExposure;
-            delete target.silencedTurns;
-            delete target.madnessCharge;
+            target.miasmaExposure = undefined;
+            target.silencedTurns = undefined;
+            target.madnessCharge = undefined;
             if (getComposure(target) < 3) {
               adjustComposure(target, 3, 'CLEANSE', events, newlyFrozenIds);
             }
@@ -666,7 +670,7 @@ export function runSaintEndOfTurnAuras(
       });
 
       if (nextCharge >= 3) {
-        delete ally.madnessCharge;
+        ally.madnessCharge = undefined;
         ally.berserkReady = true;
         events.push({
           type: 'MADNESS_ULTIMATE_TRIGGERED',
@@ -683,13 +687,11 @@ export function runSaintEndOfTurnAuras(
     const ally = sortedActive[i]!;
     if (!faithCoveredIds.has(ally.id) && (ally.faithCharge ?? 0) > 0) {
       const nextVal = (ally.faithCharge ?? 0) - 1;
-      if (nextVal <= 0) delete ally.faithCharge;
-      else ally.faithCharge = nextVal;
+      ally.faithCharge = nextVal <= 0 ? undefined : nextVal;
     }
     if (!madnessCoveredIds.has(ally.id) && (ally.madnessCharge ?? 0) > 0) {
       const nextVal = (ally.madnessCharge ?? 0) - 1;
-      if (nextVal <= 0) delete ally.madnessCharge;
-      else ally.madnessCharge = nextVal;
+      ally.madnessCharge = nextVal <= 0 ? undefined : nextVal;
     }
   }
 }

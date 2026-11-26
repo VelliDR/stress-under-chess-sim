@@ -650,7 +650,7 @@ export function createDefaultPlayerSkirmishRoster(prefix = 'sp'): RosterUnit[] {
  */
 export function createSkirmishRun(seed: string): SkirmishRunState {
   let rng = seedToRngState(`skirmish::${seed}`);
-  const pickedTemplate = selectSkirmishAiTemplate(rng);
+  const pickedTemplate = selectSkirmishAiTemplate(rng, true);
   rng = pickedTemplate.nextRngState;
   const aiTemplate = pickedTemplate.template;
 

@@ -15,7 +15,10 @@
     "build": "tsc --noEmit && tsc -p tsconfig.engine.json --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "arena": "vite-node --script scripts/arena.ts",
+    "train": "vite-node --script scripts/train.ts",
+    "train:overnight": "vite-node --script scripts/overnight.ts"
   },
   "devDependencies": {
     "typescript": "^5.8.0",

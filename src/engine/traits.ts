@@ -9,7 +9,7 @@ import {
   resolveIceSlide,
   shouldPromotePawn,
 } from './board';
-import { getEffectiveTraits } from './psychology';
+import { isSilenced } from './psychology';
 import {
   AbilityId,
   BoardView,
@@ -42,7 +42,35 @@ export function hasTrait(
   trait: TraitId,
   factions?: Readonly<Record<Side, FactionPassive>>,
 ): boolean {
-  return getEffectiveTraits(piece, factions).includes(trait);
+  if (isSilenced(piece)) return false;
+
+  const traits = piece.traits;
+  for (let i = 0; i < traits.length; i++) {
+    if (traits[i] === trait) return true;
+  }
+
+  if (
+    trait === 'DASH_ON_REVEAL' &&
+    piece.type === 'KNIGHT' &&
+    factions !== undefined &&
+    factions[piece.side] === 'RAIDERS'
+  ) {
+    return true;
+  }
+
+  if (piece.type === 'CHIMERA' && piece.absorbedForms !== undefined) {
+    const forms = piece.absorbedForms;
+    for (let i = 0; i < forms.length; i++) {
+      const form = forms[i]!;
+      if (trait === 'SHIELDED' && form.saintEcho === 'FAITH_WARD') return true;
+      const copied = form.copiedTraits;
+      for (let t = 0; t < copied.length; t++) {
+        if (copied[t] === trait) return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 export function canAddTrait(piece: Piece, trait: TraitId): boolean {

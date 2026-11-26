@@ -1,5 +1,5 @@
-import { chebyshevDistance, createEmptyFog, getTile, inBounds } from './board';
-import { getEffectiveTraits } from './psychology';
+import { chebyshevDistance, createEmptyFog, inBounds } from './board';
+import { isSilenced } from './psychology';
 import {
   BASE_VISION_RADIUS,
   BoardView,
@@ -24,22 +24,108 @@ export function isLosBlockingTile(tile: TileState | null | undefined): boolean {
   return tile.type === 'WALL' || tile.gas?.kind === 'MIASMA';
 }
 
+function pieceHasEffectiveTrait(piece: Piece, trait: 'SCOUT' | 'SHADOW_WALKER'): boolean {
+  if (isSilenced(piece)) return false;
+  const traits = piece.traits;
+  for (let i = 0; i < traits.length; i++) {
+    if (traits[i] === trait) return true;
+  }
+  if (piece.type === 'CHIMERA' && piece.absorbedForms !== undefined) {
+    const forms = piece.absorbedForms;
+    for (let i = 0; i < forms.length; i++) {
+      const copied = forms[i]!.copiedTraits;
+      for (let t = 0; t < copied.length; t++) {
+        if (copied[t] === trait) return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Computes a piece's Chebyshev vision radius including WATCHTOWER (+2) and SCOUT (+2) bonuses.
  */
 export function getPieceVisionRadius(board: BoardView, piece: Piece): number {
   let radius = BASE_VISION_RADIUS[piece.type];
 
-  const tile = getTile(board, piece.pos);
+  const tile = board.tiles[piece.pos.y]?.[piece.pos.x];
   if (tile !== undefined && tile !== null && tile.type === 'WATCHTOWER') {
     radius += WATCHTOWER_VISION_BONUS;
   }
 
-  if (getEffectiveTraits(piece, board.factions).includes('SCOUT')) {
+  if (pieceHasEffectiveTrait(piece, 'SCOUT')) {
     radius += SCOUT_VISION_BONUS;
   }
 
   return radius;
+}
+
+/**
+ * Allocation-free directional Bresenham line-of-sight between primitive coordinates.
+ * Only WALL tiles and MIASMA-covered tiles strictly between (x0, y0) and (x1, y1) block vision.
+ */
+export function hasDirectionalLosXY(
+  tiles: readonly (readonly (TileState | null)[])[],
+  width: number,
+  height: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): boolean {
+  if (x0 < 0 || x0 >= width || y0 < 0 || y0 >= height) return false;
+  if (x1 < 0 || x1 >= width || y1 < 0 || y1 >= height) return false;
+  if (x0 === x1 && y0 === y1) return true;
+
+  let cx = x0;
+  let cy = y0;
+  const dx = Math.abs(x1 - x0);
+  const dy = Math.abs(y1 - y0);
+  const sx = x0 < x1 ? 1 : -1;
+  const sy = y0 < y1 ? 1 : -1;
+  let err = dx - dy;
+
+  while (true) {
+    const e2 = 2 * err;
+    if (e2 > -dy) {
+      err -= dy;
+      cx += sx;
+    }
+    if (e2 < dx) {
+      err += dx;
+      cy += sy;
+    }
+
+    // Reached destination cell: destination itself (even if WALL or MIASMA) is visible.
+    if (cx === x1 && cy === y1) {
+      return true;
+    }
+
+    const tile = tiles[cy]?.[cx];
+    if (tile !== undefined && tile !== null && (tile.type === 'WALL' || tile.gas?.kind === 'MIASMA')) {
+      return false;
+    }
+  }
+}
+
+/**
+ * Allocation-free symmetric line-of-sight between primitive coordinates.
+ * Skips redundant reverse ray on orthogonal and exact 45° diagonal lines (identical cells).
+ */
+export function hasSymmetricLosXY(
+  tiles: readonly (readonly (TileState | null)[])[],
+  width: number,
+  height: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): boolean {
+  if (hasDirectionalLosXY(tiles, width, height, ax, ay, bx, by)) return true;
+  const adx = Math.abs(bx - ax);
+  const ady = Math.abs(by - ay);
+  if (adx === 0 || ady === 0 || adx === ady) return false;
+  return hasDirectionalLosXY(tiles, width, height, bx, by, ax, ay);
 }
 
 /**
@@ -52,45 +138,7 @@ export function hasDirectionalLineOfSight(
   from: Coord,
   to: Coord,
 ): boolean {
-  if (!inBounds(board, from) || !inBounds(board, to)) {
-    return false;
-  }
-  if (from.x === to.x && from.y === to.y) {
-    return true;
-  }
-
-  let x0 = from.x;
-  let y0 = from.y;
-  const x1 = to.x;
-  const y1 = to.y;
-
-  const dx = Math.abs(x1 - x0);
-  const dy = Math.abs(y1 - y0);
-  const sx = x0 < x1 ? 1 : -1;
-  const sy = y0 < y1 ? 1 : -1;
-  let err = dx - dy;
-
-  while (true) {
-    const e2 = 2 * err;
-    if (e2 > -dy) {
-      err -= dy;
-      x0 += sx;
-    }
-    if (e2 < dx) {
-      err += dx;
-      y0 += sy;
-    }
-
-    // Reached destination cell: destination itself (even if WALL or MIASMA) is visible.
-    if (x0 === x1 && y0 === y1) {
-      return true;
-    }
-
-    const tile = getTile(board, { x: x0, y: y0 });
-    if (isLosBlockingTile(tile)) {
-      return false;
-    }
-  }
+  return hasDirectionalLosXY(board.tiles, board.width, board.height, from.x, from.y, to.x, to.y);
 }
 
 /**
@@ -98,7 +146,35 @@ export function hasDirectionalLineOfSight(
  * Mathematically guarantees LOS(A, B) === LOS(B, A).
  */
 export function hasSymmetricLineOfSight(board: BoardView, a: Coord, b: Coord): boolean {
-  return hasDirectionalLineOfSight(board, a, b) || hasDirectionalLineOfSight(board, b, a);
+  return hasSymmetricLosXY(board.tiles, board.width, board.height, a.x, a.y, b.x, b.y);
+}
+
+/**
+ * Exact point visibility query: returns true iff `target` would be marked `'VISIBLE'` in
+ * `computeFogForSide(board, viewerSide)`. Avoids full grid rebuilds during search.
+ */
+export function isCoordVisibleToSide(
+  board: BoardView,
+  viewerSide: Side,
+  target: Coord,
+): boolean {
+  if (!inBounds(board, target)) return false;
+  const pieces = board.pieces;
+  const tx = target.x;
+  const ty = target.y;
+  for (let i = 0; i < pieces.length; i++) {
+    const piece = pieces[i]!;
+    if (piece.side !== viewerSide) continue;
+    const px = piece.pos.x;
+    const py = piece.pos.y;
+    if (px < 0 || px >= board.width || py < 0 || py >= board.height) continue;
+    const radius = getPieceVisionRadius(board, piece);
+    if (Math.abs(px - tx) > radius || Math.abs(py - ty) > radius) continue;
+    if (hasSymmetricLosXY(board.tiles, board.width, board.height, px, py, tx, ty)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -131,17 +207,19 @@ export function computeFogForSide(
     if (piece.side !== side) continue;
     if (!inBounds(board, piece.pos)) continue;
 
+    const px = piece.pos.x;
+    const py = piece.pos.y;
     const radius = getPieceVisionRadius(board, piece);
-    const minX = Math.max(0, piece.pos.x - radius);
-    const maxX = Math.min(board.width - 1, piece.pos.x + radius);
-    const minY = Math.max(0, piece.pos.y - radius);
-    const maxY = Math.min(board.height - 1, piece.pos.y + radius);
+    const minX = Math.max(0, px - radius);
+    const maxX = Math.min(board.width - 1, px + radius);
+    const minY = Math.max(0, py - radius);
+    const maxY = Math.min(board.height - 1, py + radius);
 
     for (let y = minY; y <= maxY; y++) {
       const row = fog[y]!;
       for (let x = minX; x <= maxX; x++) {
         if (row[x] === 'VISIBLE') continue;
-        if (hasSymmetricLineOfSight(board, piece.pos, { x, y })) {
+        if (hasSymmetricLosXY(board.tiles, board.width, board.height, px, py, x, y)) {
           row[x] = 'VISIBLE';
         }
       }
@@ -184,7 +262,7 @@ export function computeSilhouettes(
     if (viewerFog[enemy.pos.y]?.[enemy.pos.x] === 'VISIBLE') continue;
 
     // SHADOW_WALKER units (when not silenced) never leave silhouettes
-    if (getEffectiveTraits(enemy, board.factions).includes('SHADOW_WALKER')) continue;
+    if (pieceHasEffectiveTrait(enemy, 'SHADOW_WALKER')) continue;
 
     let detected = false;
     for (let aIdx = 0; aIdx < board.pieces.length; aIdx++) {
